@@ -78,3 +78,39 @@
               (-> opts 
                 (assoc-in [:url] (:assembly-id res))
                 (assoc-in [:timeout] 5000)))))))))
+
+(defn replay-assembly-notification [opts func])
+
+(defn list-assembly-notifications [params func])
+
+(defn list-assemblies [params func])
+
+(defn get-assembly [assembly-id func])
+
+(defn create-template [params func])
+
+(defn edit-template [template-id params func])
+
+(defn delete-template [template-id func])
+
+(defn get-template [template-id func])
+
+(defn list-templates [params func])
+
+(defn calc-signature [to-sign])
+
+(defn- append-form [req params fields])
+
+(defn- append-params-to-url [url params])
+
+(defn- find-bored-instance-url [func])
+
+(defn- find-responsive-instance [instances index func])
+
+(defn- prepare-params [params])
+
+(defn- get-expires-date [])
+
+(defn- service-url [] )
+
+(defn- remote-json [opts func])
