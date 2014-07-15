@@ -35,7 +35,7 @@
 (defn add-stream 
   "Conj on a new stream. Should be {:stream-name stream}"
   [stream]
-  (if-not (and (empty? stream) (map? stream))
+  (if-not (and (not (empty? stream)) (map? stream))
         (-> state update-in [:streams] conj stream)
     state))
 
@@ -74,13 +74,30 @@
             (do 
               (-> opts 
                 (assoc-in [:url] (:assembly-id res))
-                (assoc-in [:timeout] 5000)))))))))
+                (assoc-in [:timeout] 5000)
+                (client/delete ([:url] opts))))))))))
+
+(defn replay-assembly [opts func]
+  (let [assembly-id (:assembly-id opts)
+        request-opts {:url (str (service-url) "/assembly/" assembly-id "/replay")
+              :method "POST"}]
+    (if (:notify-url opts)
+      (-> request-opts (assoc :params {:notify-url opts}))
+      request-opts)
+    (remote-json request-opts func)))
+
+(defn replay-assembly-notification [opts func]
+  (let [assembly-id (:assembly-id opts)
+        request-opts {:url (str (service-url) "/assembly_notifications/" assembly-id "/replay")
+              :method "POST"}]
+    (if (:notify-url opts)
+      (-> request-opts (assoc :params {:notify-url opts}))
+      request-opts)
+    (remote-json request-opts func)))
 
 (defn- get-bored-instance [])
 
 (defn- remote-json [])
-
-(defn replay-assembly-notification [opts func])
 
 (defn list-assembly-notifications [params func])
 
