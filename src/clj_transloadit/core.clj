@@ -1,7 +1,8 @@
 (ns clj-transloadit.core
   (:require [pandect.core :refer :all]
             [clojure.java.io :as io]
-            [clojure.data.json :as json]))
+            [clojure.data.json :as json]
+            [clj-http.client :as client]))
 
 (def service "api2.transloadit.com")
 (def path "/assemblies")
@@ -46,7 +47,7 @@
         stream (io/file path)]
     (add-stream {name stream})))
 
-(declare get-bored-instance remote-json)
+(declare get-bored-instance remote-json service-url)
 
 (defn create-assembly [func & opts]
   (get-bored-instance nil true 
@@ -62,12 +63,8 @@
                 (func nil res))
               (func "Error!"))))))))
 
-(defn- get-bored-instance [] )
-
-(defn- remote-json [])
-
 (defn remove-assembly [assembly-id func]
-  (let [opts {:url (+ (service-url) (str "/assembly/" assembly-id))
+  (let [opts {:url (str (service-url) "/assembly/" assembly-id)
               :timeout 16000}]
     (remote-json opts
       (fn [err result]
@@ -78,6 +75,10 @@
               (-> opts 
                 (assoc-in [:url] (:assembly-id res))
                 (assoc-in [:timeout] 5000)))))))))
+
+(defn- get-bored-instance [])
+
+(defn- remote-json [])
 
 (defn replay-assembly-notification [opts func])
 
