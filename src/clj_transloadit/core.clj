@@ -9,23 +9,20 @@
 
 (def service "api2.transloadit.com")
 (def path "/assemblies")
-(def auth-key "")
-(def auth-secret "")
-(def state {
-   :auth-key auth-key
-   :auth-secret auth-secret
-   :service service
-   :region "us-east-1"
-   :protocol "http://"
-   :streams {}
-   :options {}
-   :request-opts {
-     :url "http://api2.url/assemblies"
-     :method "post"
-     :timeout (* 24 60 60 1000)
-     :params {}
-     :fields {}
-   }})
+(defn init [opts]
+  (def state {:auth-key (:auth-key opts)
+              :auth-secret (:auth-secret opts)
+              :service service
+              :region "us-east-1"
+              :protocol "http://"
+              :streams {}
+              :options {}
+              :request-opts {:url "http://api2.url/assemblies"
+                             :method "post"
+                             :timeout (* 24 60 60 1000)
+                             :params {}
+                             :fields {}}})
+  state)
 
 (defn get-current-iso-date
   "Returns current ISO 8601 compliant date."
@@ -45,8 +42,8 @@
 (defn add-stream 
   "Conj on a new stream. Should be {:stream-name stream}"
   [stream]
-  (if-not (and (not (empty? stream)) (map? stream))
-        (-> state update-in [:streams] conj stream)
+  (if (and (not (empty? stream)) (map? stream))
+    (-> state (update-in [:streams] conj stream))
     state))
 
 (defn reset-streams []
@@ -55,11 +52,12 @@
 (defn add-file [name path]
   (let [name (keyword name)
         stream (io/file path)]
+    (println name stream)
     (add-stream {name stream})))
 
 (declare get-bored-instance remote-json service-url prepare-params)
 
-(defn create-assembly [func & opts]
+(defn create-assembly [opts func]
   (get-bored-instance nil true 
     (fn [err url]
       (if (or err (not url))
@@ -67,10 +65,9 @@
         (remote-json (:request-opts state) 
           (fn [err result]
             (let [res (json/read-str result :key-fn keyword)]
-              (if err
-                (func err))          
-              (if (and res (:ok res))
-                (func nil res))
+              (cond 
+                err (func err)
+                (and res (:ok res)) (func nil res))
               (func "Error!"))))))))
 
 (defn remove-assembly [assembly-id func]
@@ -105,9 +102,29 @@
       request-opts)
     (remote-json request-opts func)))
 
-(defn- get-bored-instance [])
-
-(defn- remote-json [])
+(defn- get-bored-instance [url custom-bored-logic func]
+  (let [url (if (nil? url) (str (service-url) "/instances/bored"))
+        opts {:url url}]
+    (remote-json opts 
+      (fn [err instance]
+        (let [e (json/read-str err :key-fn err)
+              i (json/read-str instance :key-fn )]
+          (if (nil? e)
+            (if (:error i)
+              (func (:error i)))
+            (func nil (:api2_host i)))
+          (if-not (nil? custom-bored-logic)
+            (find-bored-instance-url 
+              (fn [err the-url]
+                (if err
+                  (func {:error "BORED_INSTANCE_ERROR"
+                         :message (str "Could not find a bored instance. " err)})
+                  (get-bored-instance 
+                    (str (:protocol state) "api2." the-url "/instances/bored") false func))))
+            (func {:error "CONNECTION_ERROR"
+                   :message "There was a problem connecting to the upload server"
+                   :reason err
+                   :url url})))))))
 
 (defn list-assembly-notifications [params func]
   (let [request-opts {:url (str (service-url) "/assemblies")
@@ -133,9 +150,9 @@
               (func nil res)
               (func (:error opts)))))))))
 
-(defn create-template [params func])
+;; (defn create-template [params func])
 
-(defn edit-template [template-id params func])
+;; (defn edit-template [template-id params func])
 
 (defn delete-template [template-id func]
   (let [request-opts {:url (str (service-url) "/templates/" template-id)
@@ -195,33 +212,53 @@
 (defn- service-url [] 
   (str (:protocol state) (:service state)))
 
-(defn- find-bored-instance-url [func])
-
 (defn- find-responsive-instance [instances index func]
-  (let [err (if (nil? (get instances index)) (do (func error)))
-        url (str protocol (get instances index))
+  (let [err (if (nil? (get instances index)) 
+              "Error: No responsive instances" 
+              nil)
+        url (str (:protocol state) (get instances index))
         opts {:uri url :timeout 3000}]
+    (if err
+      (func err)
+      (remote-json opts 
+        (fn [err result]
+          (if err
+            (find-responsive-instance instances (inc index) func)
+            (func result)))))))
+
+(defn- find-bored-instance-url [func]
+  (let [base "http://infra-"
+        path ".transloadit.com.s3.amazonaw.com/"
+        instances "cached_instances.json"
+        url (str base (:region state) path instances)
+        opts {:url url :timeout 3000}]
     (remote-json opts 
-      (fn []
-        (let [result 
-              instances])))
-    )
-  )
+      (fn [err result]
+        (let [err (json/read-str err :key-fn keyword)
+              res (json/read-str result :key-fn keyword)
+              instances (shuffle (:uploders res))]
+          (if err
+            (func (str "Could not uery S3 for cached uploaders:" (:message err)))
+            (find-responsive-instance instances 0 func)))))))
 
 (defn- remote-json [opts func]
-  (let [method  (or (:method opts) "GET")
+  (let [method  (or (:method opts) "get")
         params  (or (:params opts) {})
         timeout (or (:timeout opts) 5000)
-        url (if (and (= method "GET") (not (nil? params)))
-              (append-params-to-url url params)
-              nil)
-        request-opts {:uri url :timeout timeout}
-        req (client/method url
-              {:query-params params
-               :content-type :json
-               :socket-timeout 1000  ;; in milliseconds
-               :conn-timeout timeout    ;; in milliseconds
-               :accept :json})]
+        url     (or (:url opts) nil)
+        req     (if url
+                  (client/request 
+                    {:method method
+                     :url url
+                     :query-params params
+                     :content-type :json
+                     :socket-timeout 1000  ;; in milliseconds
+                     :conn-timeout timeout    ;; in milliseconds
+                     :accept :json})
+                  (println  "Error: No URL provided"))]
+    (if (and (= method "GET") (not (nil? params)))
+      (append-params-to-url url params)
+      nil)
     (if (or (= method "POST") (= method "PUT") (= method "DELETE"))
       (-> req (assoc-form (:params opts) (:fields opts)))
       req)))
