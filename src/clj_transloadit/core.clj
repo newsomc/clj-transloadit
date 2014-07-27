@@ -55,34 +55,32 @@
     (println name stream)
     (add-stream {name stream})))
 
-(declare get-bored-instance remote-json service-url prepare-params)
+(declare get-bored-instance remote-data service-url prepare-params)
 
 (defn create-assembly [opts func]
   (get-bored-instance nil true 
     (fn [err url]
       (if (or err (not url))
         (func err)
-        (remote-json (:request-opts state) 
+        (remote-data (:request-opts state) 
           (fn [err result]
-            (let [res (json/read-str result :key-fn keyword)]
-              (cond 
-                err (func err)
-                (and res (:ok res)) (func nil res))
-              (func "Error!"))))))))
+            (cond 
+              err (func err)
+              (and res (:ok result)) (func nil result)
+              :else (func "Error!"))))))))
 
 (defn remove-assembly [assembly-id func]
   (let [opts {:url (str (service-url) "/assembly/" assembly-id)
               :timeout 16000}]
-    (remote-json opts
+    (remote-data opts
       (fn [err result]
-        (let [res (json/read-str result :key-fn keyword)]
-          (if err 
-            (func err)
-            (do 
-              (-> opts 
-                (assoc-in [:url] (:assembly-id res))
-                (assoc-in [:timeout] 5000)
-                (client/delete ([:url] opts))))))))))
+        (if err 
+          (func err)
+          (do 
+            (-> opts 
+              (assoc-in [:url] (:assembly-id result))
+              (assoc-in [:timeout] 5000)
+              (client/delete ([:url] opts)))))))))
 
 (defn replay-assembly [opts func]
   (let [assembly-id (:assembly-id opts)
@@ -91,7 +89,7 @@
     (if (:notify-url opts)
       (-> request-opts (assoc :params {:notify-url opts}))
       request-opts)
-    (remote-json request-opts func)))
+    (remote-data request-opts func)))
 
 (defn replay-assembly-notification [opts func]
   (let [assembly-id (:assembly-id opts)
@@ -100,55 +98,52 @@
     (if (:notify-url opts)
       (-> request-opts (assoc :params {:notify-url opts}))
       request-opts)
-    (remote-json request-opts func)))
+    (remote-data request-opts func)))
 
 (defn- get-bored-instance [url custom-bored-logic func]
   (let [url (if (nil? url) (str (service-url) "/instances/bored"))
         opts {:url url}]
-    (remote-json opts 
+    (remote-data opts 
       (fn [err instance]
-        (let [e (json/read-str err :key-fn err)
-              i (json/read-str instance :key-fn )]
-          (if (nil? e)
-            (if (:error i)
-              (func (:error i)))
-            (func nil (:api2_host i)))
-          (if-not (nil? custom-bored-logic)
-            (find-bored-instance-url 
-              (fn [err the-url]
-                (if err
-                  (func {:error "BORED_INSTANCE_ERROR"
-                         :message (str "Could not find a bored instance. " err)})
-                  (get-bored-instance 
-                    (str (:protocol state) "api2." the-url "/instances/bored") false func))))
-            (func {:error "CONNECTION_ERROR"
-                   :message "There was a problem connecting to the upload server"
-                   :reason err
-                   :url url})))))))
+        (if (nil? error)
+          (if (:error instance)
+            (func (:error instance)))
+          (func nil (:api2_host instance)))
+        (if-not (nil? custom-bored-logic)
+          (find-bored-instance-url 
+            (fn [err the-url]
+              (if err
+                (func {:error "BORED_INSTANCE_ERROR"
+                        :message (str "Could not find a bored instance. " err)})
+                (get-bored-instance 
+                  (str (:protocol state) "api2." the-url "/instances/bored") false func))))
+          (func {:error "CONNECTION_ERROR"
+                  :message "There was a problem connecting to the upload server"
+                  :reason err
+                  :url url}))))))
 
 (defn list-assembly-notifications [params func]
   (let [request-opts {:url (str (service-url) "/assemblies")
                       :method "GET"
                       :params (or params {})}]
-    (remote-json request-opts func)))
+    (remote-data request-opts func)))
 
 (defn list-assemblies [params func]
   (let [request-opts {:url (str (service-url) "/assemblies")
                       :method "get"
                       :params (or params {})}]
-    (remote-json request-opts func)))
+    (remote-data request-opts func)))
 
 (defn get-assembly [assembly-id func]
   (let [opts {:url (str (service-url) "/assemblies/" assembly-id)
               :error "NOT OK"}]
-    (remote-json opts 
+    (remote-data opts 
       (fn [err result]
         (if err
           (func err)
-          (let [res (json/read-str result :key-fn keyword)]
-            (if (and (not (nil? res)) (:ok res))
-              (func nil res)
-              (func (:error opts)))))))))
+          (if (and (not (nil? result)) (:ok result))
+            (func nil res)
+            (func (:error opts))))))))
 
 ;; (defn create-template [params func])
 
@@ -158,29 +153,28 @@
   (let [request-opts {:url (str (service-url) "/templates/" template-id)
                       :method "DELETE"
                       :params {}}]
-    (remote-json request-opts func)))
+    (remote-data request-opts func)))
 
 (defn get-template [template-id func]
   (let [request-opts {:url (str (service-url) "/templates/" template-id)
                       :method "GET"
                       :params {}}]
-    (remote-json request-opts func)))
+    (remote-data request-opts func)))
 
 (defn list-templates [params func]
   (let [request-opts {:url (str (service-url) "/templates")
                       :method "GET"
                       :params (or params {})}]
-    (remote-json request-opts func)))
+    (remote-data request-opts func)))
 
 (defn calc-signature [to-sign]
   (sha1-hmac to-sign auth-secret))
 
 (defn- assoc-form [req params fields state]
-  (let [r (json/read-str req :key-fn keyword)
-        clj-params (prepare-params params)
+  (let [clj-params (prepare-params params)
         signature (calc-signature clj-params)
-        fields (if (empty? fields) {} (json/read-str fields :key-fn keyword))
-        form (merge (:form r) fields)]
+        fields (if (empty? fields) {} fields)
+        form (merge (:form req) fields)]
     (merge (:streams state) 
       (-> form
         (assoc :params clj-params)
@@ -201,13 +195,12 @@
   (get-current-iso-date 1))
 
 (defn- prepare-params [params]
-  (let [p (json/read-str params :key-fn keyword)]
-    (cond
-      (nil? p) {}
-      (nil? (:auth p)) (assoc p :auth {})
-      (nil? (:key (:auth p))) (assoc p :key auth-key))
-    (-> p
-      (assoc-in [:auth :expires] (get-expires-date)))))
+  (cond
+    (nil? params) {}
+    (nil? (:auth params)) (assoc params :auth {})
+    (nil? (:key (:auth params))) (assoc params :key auth-key))
+  (-> params
+    (assoc-in [:auth :expires] (get-expires-date))))
 
 (defn- service-url [] 
   (str (:protocol state) (:service state)))
@@ -220,7 +213,7 @@
         opts {:uri url :timeout 3000}]
     (if err
       (func err)
-      (remote-json opts 
+      (remote-data opts 
         (fn [err result]
           (if err
             (find-responsive-instance instances (inc index) func)
@@ -232,33 +225,33 @@
         instances "cached_instances.json"
         url (str base (:region state) path instances)
         opts {:url url :timeout 3000}]
-    (remote-json opts 
+    (remote-data opts 
       (fn [err result]
-        (let [err (json/read-str err :key-fn keyword)
-              res (json/read-str result :key-fn keyword)
-              instances (shuffle (:uploders res))]
+        (let [instances (shuffle (:uploders result))]
           (if err
             (func (str "Could not uery S3 for cached uploaders:" (:message err)))
             (find-responsive-instance instances 0 func)))))))
 
-(defn- remote-json [opts func]
-  (let [method  (or (:method opts) "get")
+(defn remote-data [opts func]
+  (let [method  (or (:method opts) "post")
         params  (or (:params opts) {})
         timeout (or (:timeout opts) 5000)
         url     (or (:url opts) nil)
         req     (if url
-                  (client/request 
-                    {:method method
-                     :url url
-                     :query-params params
+                  (client/post url
+                    {:query-params params
                      :content-type :json
                      :socket-timeout 1000  ;; in milliseconds
                      :conn-timeout timeout    ;; in milliseconds
+                     :throw-entire-message? true
                      :accept :json})
                   (println  "Error: No URL provided"))]
+    (if (or (= method "post") (= method "put") (= method "del"))
+      (-> req 
+        (assoc-form (:params opts) (:fields opts)))
+      req)))
+
+(comment
     (if (and (= method "GET") (not (nil? params)))
       (append-params-to-url url params)
-      nil)
-    (if (or (= method "POST") (= method "PUT") (= method "DELETE"))
-      (-> req (assoc-form (:params opts) (:fields opts)))
-      req)))
+      nil))
