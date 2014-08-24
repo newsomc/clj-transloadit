@@ -66,7 +66,7 @@
           (fn [err result]
             (cond 
               err (func err)
-              (and res (:ok result)) (func nil result)
+              (and result (:ok result)) (func nil result)
               :else (func "Error!"))))))))
 
 (defn remove-assembly [assembly-id func]
@@ -100,12 +100,14 @@
       request-opts)
     (remote-data request-opts func)))
 
+(declare find-bored-instance-url)
+
 (defn- get-bored-instance [url custom-bored-logic func]
   (let [url (if (nil? url) (str (service-url) "/instances/bored"))
         opts {:url url}]
     (remote-data opts 
       (fn [err instance]
-        (if (nil? error)
+        (if (nil? err)
           (if (:error instance)
             (func (:error instance)))
           (func nil (:api2_host instance)))
@@ -142,7 +144,7 @@
         (if err
           (func err)
           (if (and (not (nil? result)) (:ok result))
-            (func nil res)
+            (func nil result)
             (func (:error opts))))))))
 
 ;; (defn create-template [params func])
@@ -168,7 +170,7 @@
     (remote-data request-opts func)))
 
 (defn calc-signature [to-sign]
-  (sha1-hmac to-sign auth-secret))
+  (sha1-hmac to-sign (:auth-secret state)))
 
 (defn- assoc-form [req params fields state]
   (let [clj-params (prepare-params params)
@@ -198,7 +200,7 @@
   (cond
     (nil? params) {}
     (nil? (:auth params)) (assoc params :auth {})
-    (nil? (:key (:auth params))) (assoc params :key auth-key))
+    (nil? (:key (:auth params))) (assoc params :key (:auth-key state)))
   (-> params
     (assoc-in [:auth :expires] (get-expires-date))))
 
@@ -229,7 +231,7 @@
       (fn [err result]
         (let [instances (shuffle (:uploders result))]
           (if err
-            (func (str "Could not uery S3 for cached uploaders:" (:message err)))
+            (func (str "Could not query S3 for cached uploaders: " (:message err)))
             (find-responsive-instance instances 0 func)))))))
 
 (defn remote-data [opts func]
